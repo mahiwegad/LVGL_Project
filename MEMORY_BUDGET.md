@@ -32,10 +32,16 @@ Measured with `lv_mem_monitor()` in a headless build (no window):
 | --------------------------------------- | ---------- |
 | Heap used after startup (whole UI)      | 30,592 B   |
 | Worst first-open of a screen from home  | **2,048 B**|
-| Steady-state drift over 1,800 switches  | **0 B**    |
-| Peak heap ever used                     | 32,632 B   |
+| Steady-state drift over 1,200 switches  | **0 B**    |
+| Theme switch drift over 100 rebuilds    | 8 B        |
+| Peak heap ever used                     | 32,744 B   |
 | Switch budget                           | 2,048 B    |
 | **Verdict**                             | **PASS**   |
+
+A theme switch rebuilds the whole home layer, so it allocates as much as the
+home screen does. Doing it 100 times costs 8 bytes total (allocator metadata),
+which is what a non-leaking rebuild looks like — a leak would cost ~30 KB per
+rebuild.
 
 Per-screen first-open cost (the user can tap any card first, so each is measured
 from home):

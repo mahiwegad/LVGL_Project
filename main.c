@@ -315,6 +315,25 @@ static void run_memtest(unsigned cycles)
 
     size_t worst = analyzer_ui_worst_switch();
 
+    /*
+     * A theme switch rebuilds the whole home layer, so it allocates as much
+     * as the home screen does. Doing it repeatedly must not grow the heap:
+     * that would mean the rebuild leaks.
+     */
+    size_t before_theme = analyzer_ui_heap_used();
+
+    for(int i = 0; i < 50; i++)
+    {
+        analyzer_ui_set_dark(1);
+        analyzer_ui_set_dark(0);
+    }
+
+    size_t after_theme = analyzer_ui_heap_used();
+
+    size_t theme_drift = after_theme > before_theme ?
+        after_theme - before_theme :
+        before_theme - after_theme;
+
     printf("\n");
     printf("=========================================\n");
     printf(" RESULT\n");
@@ -323,6 +342,8 @@ static void run_memtest(unsigned cycles)
     printf("steady-state drift    : %u bytes over %u switches\n",
            (unsigned)drift,
            (unsigned)(cycles * ANALYZER_SCREEN_COUNT));
+    printf("theme switch drift    : %u bytes over 100 rebuilds\n",
+           (unsigned)theme_drift);
     printf("peak heap ever used   : %u bytes\n",
            (unsigned)analyzer_ui_heap_peak());
     printf("budget                : %d bytes\n", ANALYZER_SWITCH_BUDGET);
@@ -336,7 +357,21 @@ static void run_memtest(unsigned cycles)
  * SCREENSHOT MODE
  * ========================================================= */
 
-static int run_shot(const char *path, int screen)
+/* Is `flag` present anywhere on the command line? */
+static int has_flag(int argc, char **argv, const char *flag)
+{
+    for(int i = 1; i < argc; i++)
+    {
+        if(strcmp(argv[i], flag) == 0)
+        {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static int run_shot(const char *path, int screen, int dark)
 {
     lv_init();
 
@@ -366,6 +401,15 @@ static int run_shot(const char *path, int screen)
 
     analyzer_ui_build();
 
+    /*
+     * Apply the theme first (it rebuilds the home layer), THEN open a
+     * destination page so the page is built with the active palette.
+     */
+    if(dark)
+    {
+        analyzer_ui_set_dark(1);
+    }
+
     /* -1 renders the home screen; otherwise open a destination page. */
     if(screen >= 0)
     {
@@ -378,9 +422,9 @@ static int run_shot(const char *path, int screen)
     {
         printf("failed to write %s\n", path);
         return 1;
-    }
-
-    printf("wrote %s (%dx%d)\n", path, PANEL_W, PANEL_H);
+    }        printf("wrote %s (%dx%d) theme=%s\n",
+           path, PANEL_W, PANEL_H,
+           analyzer_ui_is_dark() ? "dark" : "light");
     printf("heap used: %u bytes\n",
            (unsigned)analyzer_ui_heap_used());
 
@@ -402,9 +446,15 @@ int main(int argc, char **argv)
 
     if(argc > 2 && strcmp(argv[1], "--shot") == 0)
     {
-        int screen = argc > 3 ? atoi(argv[3]) : -1;
+        int screen = -1;
 
-        return run_shot(argv[2], screen);
+        /* argv[3] is optional and may be "--dark" rather than an index. */
+        if(argc > 3 && argv[3][0] >= '0' && argv[3][0] <= '9')
+        {
+            screen = atoi(argv[3]);
+        }
+
+        return run_shot(argv[2], screen, has_flag(argc, argv, "--dark"));
     }
 
 
@@ -479,7 +529,7 @@ int main(int argc, char **argv)
 
     lv_sdl_window_set_title(
         display,
-        "Biochemistry Analyzer"
+        "STM32F407G-DISC1"
     );
 
     lv_sdl_window_set_zoom(display, 1.0f);
@@ -492,6 +542,12 @@ int main(int argc, char **argv)
      * ----------------------------------------------------- */
 
     analyzer_ui_build();
+
+    /* Start straight in the dark palette when asked (debug/demo). */
+    if(has_flag(argc, argv, "--dark"))
+    {
+        analyzer_ui_set_dark(1);
+    }
 
     printf(
         "[mem] after startup: %u bytes used, %u bytes peak\n",

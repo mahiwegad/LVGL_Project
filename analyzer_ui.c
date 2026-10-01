@@ -22,42 +22,105 @@
 /* =========================================================
  * PALETTE
  *
- * LIGHT palette from ui/ui/theme.py. Keys are named after the
- * semantic palette keys so the two stay comparable side by side.
+ * Both palettes from ui/ui/theme.py (LIGHT and DARK), as plain
+ * hex values so they can be swapped at runtime. Widget colours
+ * are read through the CLR_* macros below, which go through the
+ * active `pal` pointer.
+ *
+ * A theme change rebuilds the widget tree: LVGL bakes a colour
+ * into a widget's style when the style is set, so the tree has
+ * to be recreated to repaint. ui/ui/theme.py does the same thing
+ * (the screens re-read tc() and rebuild).
  * ========================================================= */
 
-#define CLR_WINDOW_BG       lv_color_hex(0xEEF2F7)
-#define CLR_SURFACE         lv_color_hex(0xFFFFFF)
-#define CLR_SURFACE_SUNKEN  lv_color_hex(0xF1F5F9)
-#define CLR_BORDER          lv_color_hex(0xE2E8F0)
-#define CLR_TEXT            lv_color_hex(0x0F172A)
-#define CLR_TEXT_MUTED      lv_color_hex(0x64748B)
-#define CLR_TEXT_ON_ACCENT  lv_color_hex(0xFFFFFF)
-#define CLR_ACCENT          lv_color_hex(0x0F766E)
-#define CLR_ACCENT_TEXT     lv_color_hex(0x0F766E)
-#define CLR_SUCCESS         lv_color_hex(0x15803D)
-#define CLR_WARNING         lv_color_hex(0xF59E0B)
-#define CLR_BTN_NEUTRAL     lv_color_hex(0xE2E8F0)
+typedef struct
+{
+    uint32_t window_bg;
+    uint32_t surface;
+    uint32_t surface_sunken;
+    uint32_t border;
+    uint32_t text;
+    uint32_t text_muted;
+    uint32_t text_on_accent;
+    uint32_t accent;
+    uint32_t accent_text;
+    uint32_t success;
+    uint32_t warning;
+    uint32_t btn_neutral;
+} analyzer_palette_t;
+
+static const analyzer_palette_t PAL_LIGHT =
+{
+    0xEEF2F7,   /* window_bg        */
+    0xFFFFFF,   /* surface          */
+    0xF1F5F9,   /* surface_sunken   */
+    0xE2E8F0,   /* border           */
+    0x0F172A,   /* text             */
+    0x64748B,   /* text_muted       */
+    0xFFFFFF,   /* text_on_accent   */
+    0x0F766E,   /* accent (teal)    */
+    0x0F766E,   /* accent_text      */
+    0x15803D,   /* success          */
+    0xF59E0B,   /* warning          */
+    0xE2E8F0    /* btn_neutral      */
+};
+
+static const analyzer_palette_t PAL_DARK =
+{
+    0x000000,   /* window_bg: true black, per theme.py */
+    0x020304,   /* surface: near-black charcoal        */
+    0x000000,   /* surface_sunken                      */
+    0x1E222A,   /* border: hairline                    */
+    0xF9F9F9,   /* text                                */
+    0xA6ADB9,   /* text_muted                          */
+    0xFFFFFF,   /* text_on_accent                      */
+    0xE94560,   /* accent (coral)                      */
+    0xFF8A9E,   /* accent_text                         */
+    0x34D399,   /* success                             */
+    0xFEA83E,   /* warning                             */
+    0x0E1116    /* btn_neutral                         */
+};
+
+static const analyzer_palette_t *pal = &PAL_LIGHT;
+
+#define CLR_WINDOW_BG       (lv_color_hex(pal->window_bg))
+#define CLR_SURFACE         (lv_color_hex(pal->surface))
+#define CLR_SURFACE_SUNKEN  (lv_color_hex(pal->surface_sunken))
+#define CLR_BORDER          (lv_color_hex(pal->border))
+#define CLR_TEXT            (lv_color_hex(pal->text))
+#define CLR_TEXT_MUTED      (lv_color_hex(pal->text_muted))
+#define CLR_TEXT_ON_ACCENT  (lv_color_hex(pal->text_on_accent))
+#define CLR_ACCENT          (lv_color_hex(pal->accent))
+#define CLR_ACCENT_TEXT     (lv_color_hex(pal->accent_text))
+#define CLR_SUCCESS         (lv_color_hex(pal->success))
+#define CLR_WARNING         (lv_color_hex(pal->warning))
+#define CLR_BTN_NEUTRAL     (lv_color_hex(pal->btn_neutral))
 
 /* =========================================================
  * TYPE SCALE
  *
  * Design font size -> the nearest Montserrat face compiled in.
- *   22 -> 14   (card icon)
- *   17 -> 12   (card title)   19 -> 12  (card arrow)
- *   16 -> 10   (status line)
- *   20 -> 12   (countdown value)
- *   11 ->  8   (unit caption) 12 ->  8  (progress caption)
+ *
+ * The small end of the scale is deliberately raised above the
+ * strict 0.625 scale of the 1280x720 design: at 8 px the
+ * subtitles and captions were unreadable on the real panel.
+ * Headings keep their size, so the hierarchy still reads.
+ *
+ *   22 -> 14   (card icon)     19 -> 14  (card arrow)
+ *   17 -> 14   (card title)    12 -> 12  (card subtitle)
+ *   16 -> 14   (status line)   20 -> 14  (countdown value)
+ *   11 -> 12   (unit caption)  12 -> 12  (progress caption)
  * ========================================================= */
 
 #define F_CARD_ICON   (&lv_font_montserrat_14)
-#define F_CARD_TITLE  (&lv_font_montserrat_12)
-#define F_CARD_SUB    (&lv_font_montserrat_8)
-#define F_CARD_ARROW  (&lv_font_montserrat_12)
-#define F_STATUS      (&lv_font_montserrat_10)
-#define F_VALUE       (&lv_font_montserrat_12)
-#define F_CAPTION     (&lv_font_montserrat_8)
-#define F_PAGE_TITLE  (&lv_font_montserrat_14)
+#define F_CARD_TITLE  (&lv_font_montserrat_14)
+#define F_CARD_SUB    (&lv_font_montserrat_12)
+#define F_CARD_ARROW  (&lv_font_montserrat_14)
+#define F_STATUS      (&lv_font_montserrat_14)
+#define F_VALUE       (&lv_font_montserrat_14)
+#define F_CAPTION     (&lv_font_montserrat_12)
+#define F_PAGE_TITLE  (&lv_font_montserrat_20)
+#define F_SWITCH      (&lv_font_montserrat_12)
 
 /* =========================================================
  * MENU DEFINITION (ui/ui/main_menu.py: create_main_menu)
@@ -120,6 +183,10 @@ static lv_obj_t *home_layer;
 static lv_obj_t *current_page;
 static size_t worst_switch_overhead;
 static int verbose_nav = 1;
+
+/* 0 = light, 1 = dark. The analyzer opens in light mode (theme.py:
+ * START_IN_LIGHT), which is the lab SOP. */
+static int dark_mode = 0;
 
 
 /* =========================================================
@@ -358,23 +425,72 @@ static lv_obj_t *create_menu_card(
 /* =========================================================
  * THEME SWITCH  (top-right of the top bar)
  *
- * Visual port of the CustomTkinter segmented button. The
- * light/dark repaint itself is not wired yet: the analyzer
- * always opens in light mode, and this shows that state.
+ * Port of the CustomTkinter segmented button. Picking a segment
+ * swaps the palette and rebuilds the widget tree.
  * ========================================================= */
+
+static void theme_segment_cb(lv_event_t *e)
+{
+    int wants_dark = (int)(intptr_t)lv_event_get_user_data(e);
+
+    analyzer_ui_set_dark(wants_dark);
+}
+
+static void create_segment(
+    lv_obj_t *parent,
+    const char *text,
+    int selected,
+    int is_dark_segment
+)
+{
+    lv_obj_t *label = lv_label_create(parent);
+
+    lv_label_set_text(label, text);
+
+    lv_obj_set_style_text_font(label, F_SWITCH, LV_PART_MAIN);
+
+    lv_obj_set_style_text_color(
+        label,
+        selected ? CLR_TEXT_ON_ACCENT : CLR_TEXT,
+        LV_PART_MAIN
+    );
+
+    if(selected)
+    {
+        lv_obj_set_style_bg_color(label, CLR_ACCENT, LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(label, LV_OPA_COVER, LV_PART_MAIN);
+    }
+
+    lv_obj_set_style_radius(label, sc(8), LV_PART_MAIN);
+
+    lv_obj_set_style_pad_hor(label, sc(12), LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(label, sc(6), LV_PART_MAIN);
+
+    lv_obj_set_flex_grow(label, 1);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+    lv_obj_add_flag(label, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_add_event_cb(
+        label,
+        theme_segment_cb,
+        LV_EVENT_CLICKED,
+        (void *)(intptr_t)is_dark_segment
+    );
+}
 
 static void create_theme_switch(lv_obj_t *parent)
 {
     lv_obj_t *seg = lv_obj_create(parent);
 
-    lv_obj_set_size(seg, sc(146), sc(30));
+    lv_obj_set_size(seg, sc(184), sc(44));
 
     lv_obj_set_style_bg_color(seg, CLR_BTN_NEUTRAL, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_set_style_radius(seg, sc(10), LV_PART_MAIN);
     lv_obj_set_style_border_width(seg, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(seg, sc(2), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(seg, sc(4), LV_PART_MAIN);
 
     lv_obj_set_flex_flow(seg, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(
@@ -386,40 +502,8 @@ static void create_theme_switch(lv_obj_t *parent)
 
     lv_obj_clear_flag(seg, LV_OBJ_FLAG_SCROLLABLE);
 
-
-    /* Selected segment: "Light". */
-    lv_obj_t *light = lv_label_create(seg);
-
-    lv_label_set_text(light, "Light");
-
-    lv_obj_set_style_text_font(light, F_CAPTION, LV_PART_MAIN);
-    lv_obj_set_style_text_color(light, CLR_TEXT_ON_ACCENT, LV_PART_MAIN);
-
-    lv_obj_set_style_bg_color(light, CLR_ACCENT, LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(light, LV_OPA_COVER, LV_PART_MAIN);
-
-    lv_obj_set_style_radius(light, sc(8), LV_PART_MAIN);
-
-    lv_obj_set_style_pad_hor(light, sc(12), LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(light, sc(4), LV_PART_MAIN);
-
-    lv_obj_set_flex_grow(light, 1);
-    lv_obj_set_style_text_align(light, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-
-
-    /* Unselected segment: "Dark". */
-    lv_obj_t *dark = lv_label_create(seg);
-
-    lv_label_set_text(dark, "Dark");
-
-    lv_obj_set_style_text_font(dark, F_CAPTION, LV_PART_MAIN);
-    lv_obj_set_style_text_color(dark, CLR_TEXT, LV_PART_MAIN);
-
-    lv_obj_set_style_pad_hor(dark, sc(12), LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(dark, sc(4), LV_PART_MAIN);
-
-    lv_obj_set_flex_grow(dark, 1);
-    lv_obj_set_style_text_align(dark, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    create_segment(seg, "Light", !dark_mode, 0);
+    create_segment(seg, "Dark", dark_mode, 1);
 }
 
 
@@ -864,6 +948,54 @@ void analyzer_ui_go_home(void)
     {
         printf(
             "[nav] home  used=%u\n",
+            (unsigned)analyzer_ui_heap_used()
+        );
+    }
+}
+
+int analyzer_ui_is_dark(void)
+{
+    return dark_mode;
+}
+
+void analyzer_ui_set_dark(int dark)
+{
+    dark = dark ? 1 : 0;
+
+    if(dark == dark_mode)
+    {
+        return;
+    }
+
+    dark_mode = dark;
+
+    pal = dark_mode ? &PAL_DARK : &PAL_LIGHT;
+
+    /*
+     * LVGL bakes a colour into a widget's style when the style is set, so a
+     * repaint means recreating the tree. The home layer and any open page are
+     * deleted BEFORE the new home is built, so the peak stays one screen's
+     * worth instead of briefly holding two (the same rule navigation uses).
+     */
+    if(current_page != NULL)
+    {
+        lv_obj_delete(current_page);
+        current_page = NULL;
+    }
+
+    if(home_layer != NULL)
+    {
+        lv_obj_delete(home_layer);
+        home_layer = NULL;
+    }
+
+    build_home();
+
+    if(verbose_nav)
+    {
+        printf(
+            "[theme] %s  used=%u\n",
+            dark_mode ? "dark" : "light",
             (unsigned)analyzer_ui_heap_used()
         );
     }

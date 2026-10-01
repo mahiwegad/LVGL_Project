@@ -46,6 +46,18 @@ void analyzer_ui_set_verbose(int enabled);
 /** Menu title of a destination screen, for reports and logs. */
 const char *analyzer_ui_screen_title(analyzer_screen_t screen);
 
+/**
+ * Switch between the light and dark palettes.
+ *
+ * LVGL bakes colours into widget styles at creation time, so this rebuilds the
+ * widget tree with the other palette. The analyzer starts in light mode
+ * (theme.py: START_IN_LIGHT), which is the lab SOP.
+ */
+void analyzer_ui_set_dark(int dark);
+
+/** Non-zero when the dark palette is active. */
+int analyzer_ui_is_dark(void);
+
 /* ---- memory reporting (same instrumentation as the memory test) ---- */
 
 size_t analyzer_ui_heap_used(void);
