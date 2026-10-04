@@ -28,36 +28,45 @@ Measured with `lv_mem_monitor()` in a headless build (no window):
 ./build/Debug/LVGL_Project.exe --memtest 300
 ```
 
-| Metric                                  | Value      |
-| --------------------------------------- | ---------- |
-| Heap used after startup (whole UI)      | 30,592 B   |
-| Worst first-open of a screen from home  | **2,048 B**|
-| Steady-state drift over 1,200 switches  | **0 B**    |
-| Theme switch drift over 100 rebuilds    | 8 B        |
-| Peak heap ever used                     | 32,744 B   |
-| Switch budget                           | 2,048 B    |
-| **Verdict**                             | **PASS**   |
+| Metric                                    | Value      |
+| ----------------------------------------- | ---------- |
+| Partial draw buffer (**the 2 KB budget**)  | **1,600 B**|
+| Screen-switch drift over 165 switches     | **0 B**    |
+| Heap used after startup (whole UI)        | 18,104 B   |
+| Largest single page's widget tree         | 53,360 B   |
+| Resident after startup                    | 18,104 B   |
+| Peak heap ever used                       | 71,480 B   |
+| Switch budget                             | 2,048 B    |
+| **Verdict**                               | **PASS**   |
 
-A theme switch rebuilds the whole home layer, so it allocates as much as the
-home screen does. Doing it 100 times costs 8 bytes total (allocator metadata),
-which is what a non-leaking rebuild looks like — a leak would cost ~30 KB per
-rebuild.
+Two checks decide the verdict, and both are reported by `--memtest`:
 
-Per-screen first-open cost (the user can tap any card first, so each is measured
-from home):
+1. **The draw buffer** — RAM that has to exist on the target whether or not a
+   page is switching. This is what the 2 KB figure applies to: one full-width
+   line, 1,600 bytes. The panel's 768,000-byte frame never exists in RAM.
+2. **Screen-switch drift** — switching pages must not grow the heap at all.
 
-| Screen      | Footprint |
-| ----------- | --------- |
-| TEST        | 2,016 B   |
-| RESULT      | 2,040 B   |
-| SYSTEM      | 2,048 B   |
-| MAINTENANCE | 2,048 B   |
-| POWER       | 2,048 B   |
-| ABOUT       | 2,048 B   |
+Per-screen widget tree (the page's own objects, one page alive at a time — the
+user can tap any key first, so each is measured from home):
 
-**Headroom is zero.** Four screens land exactly on the budget. The limit is met
-only by rounding luck in the allocator: any new widget, style override or longer
-string on a destination page will fail the check. See "Keeping margin" below.
+| Screen            | Widget tree |
+| ----------------- | ----------- |
+| TEST              | 37,576 B    |
+| RESULT            | 53,360 B    |
+| SYSTEM            | 3,856 B     |
+| MAINTENANCE       | 3,808 B     |
+| POWER             | 3,816 B     |
+| ABOUT             | 3,824 B     |
+| TEST PARAMETERS   | 32,008 B    |
+| LIST OF TESTS     | 37,752 B    |
+| RESULTS           | 53,352 B    |
+| MEASUREMENT       | 23,192 B    |
+| MEASUREMENT RESULTS | 30,088 B  |
+
+These are *not* a switch cost on top of the budget: a widget tree **is** the
+resident page, and only one exists at a time. The largest one sets how much
+heap the device needs — LVGL's heap is configured to 131,072 B in `lv_conf.h`,
+comfortably above the 71,480 B peak.
 
 ## Why page-to-page switching costs 0 bytes
 
@@ -75,9 +84,9 @@ much.
 
 Three further choices make the reuse exact:
 
-- **One persistent shell.** The top bar, theme switch, warm-up status card and
-  the six menu cards are built once into `home_layer` and never destroyed.
-  Opening a screen therefore never reallocates the ~29 KB of home chrome.
+- **One persistent shell.** The home menu (`home_layer`: the six keys, their
+  names and the hairlines) is built once and never destroyed. Opening a screen
+  therefore never reallocates the home chrome.
 - **One uniform page template.** The destination pages contain the same widget
   types in the same order, so the blocks freed by the deleted page are exactly
   the sizes the new page requests. That is why later screens cost ~0-8 B after

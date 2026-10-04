@@ -56,7 +56,7 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
 /** Size of the pool `lv_malloc()` allocates from. Needs to be at least 2kB (2048). */
-#define LV_MEM_SIZE 65536
+#define LV_MEM_SIZE 131072
 
 /** Place the pool at a fixed address instead of allocating it as a normal array.
  *  0: unused.
@@ -961,7 +961,7 @@
 #define LV_FONT_MONTSERRAT_14 1
 
 /** Montserrat 16 */
-#define LV_FONT_MONTSERRAT_16 0
+#define LV_FONT_MONTSERRAT_16 1
 
 /** Montserrat 18 */
 #define LV_FONT_MONTSERRAT_18 0
@@ -997,7 +997,7 @@
 #define LV_FONT_MONTSERRAT_38 0
 
 /** Montserrat 40 */
-#define LV_FONT_MONTSERRAT_40 0
+#define LV_FONT_MONTSERRAT_40 1
 
 /** Montserrat 42 */
 #define LV_FONT_MONTSERRAT_42 0

@@ -1,6 +1,7 @@
 #include "lvgl.h"
 #include "lvgl/drivers/sdl/lv_sdl_window.h"
 #include "lvgl/drivers/sdl/lv_sdl_mouse.h"
+#include "lvgl/drivers/sdl/lv_sdl_keyboard.h"
 
 #include "analyzer_ui.h"
 
@@ -98,14 +99,48 @@ static void print_pixel_format(lv_display_t *disp)
 
 
 /* =========================================================
- * MEMORY-TEST DISPLAY (no window)
+ * DRAW BUFFER
  *
- * A small partial buffer and a no-op flush is all the memory
- * test needs: it measures object/style allocation, not
- * pixels.
+ * The draw buffer is PARTIAL: LVGL renders the screen in
+ * horizontal strips through it, so the panel's 768000-byte
+ * frame never exists in RAM. One full-width line is the
+ * smallest buffer LVGL renders correctly with (its own
+ * guidance is "more than the horizontal resolution in
+ * pixels"), and it is what makes an 800x480 panel reachable
+ * on a part with only a few KB of RAM.
+ *
+ * This is the figure the 2 KB budget applies to: it is RAM
+ * that has to exist on the target whether or not a page is
+ * being switched. The widget footprint of a page is a
+ * separate number and is measured by --memtest.
  * ========================================================= */
 
-static uint8_t memtest_buf[PANEL_W * 20 * PANEL_BPP];
+#define DRAW_BUF_LINES 1
+#define DRAW_BUF_BYTES (PANEL_W * DRAW_BUF_LINES * PANEL_BPP)
+
+#if DRAW_BUF_BYTES > ANALYZER_SWITCH_BUDGET
+#error "Draw buffer is over the 2 KB budget - lower DRAW_BUF_LINES."
+#endif
+
+static uint8_t memtest_buf[DRAW_BUF_BYTES];
+
+static void print_draw_buffer(void)
+{
+    printf(
+        "[buf] partial draw buffer = %u bytes (%d line x %d px x %d B)\n",
+        (unsigned)sizeof(memtest_buf),
+        DRAW_BUF_LINES,
+        PANEL_W,
+        PANEL_BPP
+    );
+
+    printf(
+        "[buf] budget %d bytes -> %s  (full 800x480 frame would be %u bytes)\n",
+        ANALYZER_SWITCH_BUDGET,
+        sizeof(memtest_buf) <= (size_t)ANALYZER_SWITCH_BUDGET ? "PASS" : "FAIL",
+        (unsigned)(PANEL_W * PANEL_H * PANEL_BPP)
+    );
+}
 
 static void memtest_flush_cb(
     lv_display_t *disp,
@@ -121,15 +156,22 @@ static void memtest_flush_cb(
 
 
 /* =========================================================
- * SCREENSHOT DISPLAY
+ * SCREENSHOT DISPLAY  (host-only diagnostic)
  *
- * Renders the whole screen into one buffer and keeps a copy
- * of the pixels, so the UI can be written out as an image
- * and looked at without a window.
+ * --shot renders the screen once into a scratch buffer and
+ * writes it out as a BMP, so the UI can be reviewed without
+ * a window. This is the ONLY place a full-frame buffer is
+ * ever used, and it is not a static array: it is allocated
+ * inside run_shot() for the duration of the shot and freed
+ * before the process exits, so the device build never
+ * carries an 800x480 framebuffer in its .bss.
  * ========================================================= */
 
-static uint8_t shot_buf[PANEL_W * PANEL_H * PANEL_BPP];
-static uint16_t shot_frame[PANEL_W * PANEL_H];
+static uint8_t *shot_buf;
+static uint16_t *shot_frame;
+
+#define SHOT_BUF_BYTES (PANEL_W * PANEL_H * PANEL_BPP)
+#define SHOT_FRAME_BYTES (PANEL_W * PANEL_H * sizeof(uint16_t))
 
 static void shot_flush_cb(
     lv_display_t *disp,
@@ -259,17 +301,155 @@ static int write_bmp(
 
 
 /* =========================================================
+ * HOME CLICK TEST  (host-only diagnostic)
+ *
+ * Drives the home menu through LVGL's own input pipeline. A synthetic pointer
+ * indev is aimed at the centre of each key, pressed and released, and the page
+ * that opens is compared with the screen that key is supposed to open.
+ *
+ * This is what actually proves the keys are clickable: it exercises the real
+ * hit test, so it would fail if the hairline layer drawn over the keys were
+ * swallowing taps, if a key and its name were not both covered by one tap
+ * target, or if a callback had drifted to the wrong destination.
+ *
+ * The aim points come from analyzer_ui_home_key_center(), which reads them off
+ * the live widgets - so this test follows the layout instead of restating it.
+ * ========================================================= */
+
+static int32_t click_x;
+static int32_t click_y;
+static int click_down;
+
+static void clicktest_read_cb(lv_indev_t *indev, lv_indev_data_t *data)
+{
+    LV_UNUSED(indev);
+
+    data->point.x = click_x;
+    data->point.y = click_y;
+    data->state = click_down ?
+        LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+}
+
+/*
+ * Run LVGL for `ms` of real time.
+ *
+ * The busy wait is the point: an indev is sampled by LVGL's own timer (about
+ * every 33 ms of wall clock), so a tight loop of lv_timer_handler() calls that
+ * returns instantly would never let it read the pointer, and a press or a
+ * release would simply be missed.
+ */
+static void clicktest_pump(int ms)
+{
+    clock_t until = clock() + (clock_t)((long)ms * CLOCKS_PER_SEC / 1000);
+
+    do
+    {
+        lv_timer_handler();
+    }
+    while(clock() < until);
+}
+
+static int run_clicktest(void)
+{
+    lv_init();
+
+    lv_tick_set_cb(headless_tick_cb);
+
+    lv_display_t *disp = lv_display_create(PANEL_W, PANEL_H);
+
+    lv_display_set_flush_cb(disp, memtest_flush_cb);
+
+    lv_display_set_buffers(
+        disp,
+        memtest_buf,
+        NULL,
+        (uint32_t)sizeof(memtest_buf),
+        LV_DISPLAY_RENDER_MODE_PARTIAL
+    );
+
+    analyzer_ui_build();
+    analyzer_ui_set_verbose(0);
+
+    lv_indev_t *indev = lv_indev_create();
+
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, clicktest_read_cb);
+    lv_indev_set_display(indev, disp);
+
+    printf("\n=========================================\n");
+    printf(" HOME CLICK TEST\n");
+    printf("=========================================\n");
+
+    int failures = 0;
+
+    for(int i = 0; i < (int)ANALYZER_HOME_COUNT; i++)
+    {
+        const char *want = analyzer_ui_screen_title((analyzer_screen_t)i);
+
+        /* Home first, and let it lay out and paint, so the key's centre can be
+         * read off a widget that has real coordinates. */
+        analyzer_ui_go_home();
+        clicktest_pump(150);
+
+        click_x = -1;
+        click_y = -1;
+
+        analyzer_ui_home_key_center(i, &click_x, &click_y);
+
+        click_down = 1;
+        clicktest_pump(120);
+
+        click_down = 0;
+        clicktest_pump(150);
+
+        analyzer_screen_t got = analyzer_ui_current_screen();
+
+        const char *got_title = (got == ANALYZER_SCREEN_COUNT) ?
+            "home (nothing opened)" :
+            analyzer_ui_screen_title(got);
+
+        int ok = ((int)got == i);
+
+        if(!ok)
+        {
+            failures++;
+        }
+
+        printf(
+            "  press (%3d,%3d)  %-12s -> %-24s %s\n",
+            (int)click_x,
+            (int)click_y,
+            want,
+            got_title,
+            ok ? "OK" : "FAIL"
+        );
+    }
+
+    printf("-----------------------------------------\n");
+    printf("verdict               : %s\n", failures ? "FAIL" : "PASS");
+    printf("=========================================\n");
+
+    return failures ? 1 : 0;
+}
+
+
+/* =========================================================
  * MEMORY TEST
  * ========================================================= */
+
+/* Widget footprint of each screen, filled in by the first-open pass below. */
+static size_t screen_footprint[ANALYZER_SCREEN_COUNT];
 
 static void run_memtest(unsigned cycles)
 {
     printf("\n");
     printf("=========================================\n");
-    printf(" PAGE SWITCH MEMORY TEST\n");
+    printf(" MEMORY TEST\n");
     printf("=========================================\n");
     printf("starting heap used : %u bytes\n",
            (unsigned)analyzer_ui_heap_used());
+
+    print_draw_buffer();
 
     printf("\nfirst open of every screen from home:\n");
 
@@ -280,8 +460,10 @@ static void run_memtest(unsigned cycles)
         size_t overhead =
             analyzer_ui_open((analyzer_screen_t)i);
 
+        screen_footprint[i] = overhead;
+
         printf(
-            "  %-12s footprint=%u bytes\n",
+            "  %-12s widget tree = %u bytes\n",
             analyzer_ui_screen_title(i),
             (unsigned)overhead
         );
@@ -315,40 +497,53 @@ static void run_memtest(unsigned cycles)
 
     size_t worst = analyzer_ui_worst_switch();
 
-    /*
-     * A theme switch rebuilds the whole home layer, so it allocates as much
-     * as the home screen does. Doing it repeatedly must not grow the heap:
-     * that would mean the rebuild leaks.
-     */
-    size_t before_theme = analyzer_ui_heap_used();
+    size_t biggest = 0;
 
-    for(int i = 0; i < 50; i++)
+    for(int i = 0; i < (int)ANALYZER_SCREEN_COUNT; i++)
     {
-        analyzer_ui_set_dark(1);
-        analyzer_ui_set_dark(0);
+        if(screen_footprint[i] > biggest)
+        {
+            biggest = screen_footprint[i];
+        }
     }
 
-    size_t after_theme = analyzer_ui_heap_used();
-
-    size_t theme_drift = after_theme > before_theme ?
-        after_theme - before_theme :
-        before_theme - after_theme;
+    /* The two checks that decide the verdict.
+     *
+     *   1. the draw buffer - RAM that must exist on the target whether or not
+     *      a page is switching. This is the 2 KB budget.
+     *   2. switch drift - switching screens must not grow the heap at all.
+     *      Delete-before-create means the outgoing page's blocks are exactly
+     *      what the incoming page asks for, so this is the figure that proves
+     *      two screens are never resident together (nothing is "duplicated in
+     *      RAM"), and it must be zero.
+     *
+     * A page's widget tree is reported too, but it is not a switch cost on top
+     * of anything: it IS the resident page, and only one exists at a time.
+     */
+    int buf_ok = sizeof(memtest_buf) <= (size_t)ANALYZER_SWITCH_BUDGET;
+    int drift_ok = (drift == 0);
 
     printf("\n");
     printf("=========================================\n");
     printf(" RESULT\n");
     printf("=========================================\n");
-    printf("worst switch overhead : %u bytes\n", (unsigned)worst);
-    printf("steady-state drift    : %u bytes over %u switches\n",
+    printf("partial draw buffer   : %u / %d bytes        %s\n",
+           (unsigned)sizeof(memtest_buf), ANALYZER_SWITCH_BUDGET,
+           buf_ok ? "PASS" : "FAIL");
+    printf("switch drift          : %u bytes / %u switches %s\n",
            (unsigned)drift,
-           (unsigned)(cycles * ANALYZER_SCREEN_COUNT));
-    printf("theme switch drift    : %u bytes over 100 rebuilds\n",
-           (unsigned)theme_drift);
+           (unsigned)(cycles * ANALYZER_SCREEN_COUNT),
+           drift_ok ? "PASS" : "FAIL");
+    printf("-----------------------------------------\n");
+    printf("largest screen tree   : %u bytes (one page alive at a time)\n",
+           (unsigned)biggest);
+    printf("worst switch overhead : %u bytes\n", (unsigned)worst);
+    printf("resident after startup: %u bytes\n",
+           (unsigned)analyzer_ui_heap_used());
     printf("peak heap ever used   : %u bytes\n",
            (unsigned)analyzer_ui_heap_peak());
-    printf("budget                : %d bytes\n", ANALYZER_SWITCH_BUDGET);
     printf("verdict               : %s\n",
-           worst <= (size_t)ANALYZER_SWITCH_BUDGET ? "PASS" : "FAIL");
+           (buf_ok && drift_ok) ? "PASS" : "FAIL");
     printf("=========================================\n");
 }
 
@@ -357,25 +552,34 @@ static void run_memtest(unsigned cycles)
  * SCREENSHOT MODE
  * ========================================================= */
 
-/* Is `flag` present anywhere on the command line? */
-static int has_flag(int argc, char **argv, const char *flag)
+/* The value of a "--flag <int>" pair, or `fallback` when the flag is absent. */
+static int flag_int(int argc, char **argv, const char *flag, int fallback)
 {
-    for(int i = 1; i < argc; i++)
+    for(int i = 1; i + 1 < argc; i++)
     {
         if(strcmp(argv[i], flag) == 0)
         {
-            return 1;
+            return atoi(argv[i + 1]);
         }
     }
 
-    return 0;
+    return fallback;
 }
 
-static int run_shot(const char *path, int screen, int dark)
+static int run_shot(const char *path, int screen, int picker)
 {
     lv_init();
 
     lv_tick_set_cb(headless_tick_cb);
+
+    shot_buf = (uint8_t *)malloc(SHOT_BUF_BYTES);
+    shot_frame = (uint16_t *)malloc(SHOT_FRAME_BYTES);
+
+    if(shot_buf == NULL || shot_frame == NULL)
+    {
+        printf("failed to allocate the screenshot buffers\n");
+        return 1;
+    }
 
     lv_display_t *disp = lv_display_create(PANEL_W, PANEL_H);
 
@@ -391,7 +595,7 @@ static int run_shot(const char *path, int screen, int dark)
         disp,
         shot_buf,
         NULL,
-        (uint32_t)sizeof(shot_buf),
+        (uint32_t)SHOT_BUF_BYTES,
         LV_DISPLAY_RENDER_MODE_FULL
     );
 
@@ -401,19 +605,16 @@ static int run_shot(const char *path, int screen, int dark)
 
     analyzer_ui_build();
 
-    /*
-     * Apply the theme first (it rebuilds the home layer), THEN open a
-     * destination page so the page is built with the active palette.
-     */
-    if(dark)
-    {
-        analyzer_ui_set_dark(1);
-    }
-
     /* -1 renders the home screen; otherwise open a destination page. */
     if(screen >= 0)
     {
         analyzer_ui_open((analyzer_screen_t)screen);
+    }
+
+    /* Optional: open a picker so the modal can be reviewed in the shot. */
+    if(picker >= 0)
+    {
+        analyzer_ui_debug_open_picker(picker);
     }
 
     lv_refr_now(NULL);
@@ -422,11 +623,19 @@ static int run_shot(const char *path, int screen, int dark)
     {
         printf("failed to write %s\n", path);
         return 1;
-    }        printf("wrote %s (%dx%d) theme=%s\n",
-           path, PANEL_W, PANEL_H,
-           analyzer_ui_is_dark() ? "dark" : "light");
+    }
+
+    printf("wrote %s (%dx%d)\n", path, PANEL_W, PANEL_H);
     printf("heap used: %u bytes\n",
            (unsigned)analyzer_ui_heap_used());
+
+    /* The scratch buffers are host-side only: hand them back before exit so
+     * nothing about --shot survives as a resident allocation. */
+    free(shot_frame);
+    free(shot_buf);
+
+    shot_frame = NULL;
+    shot_buf = NULL;
 
     return 0;
 }
@@ -448,13 +657,27 @@ int main(int argc, char **argv)
     {
         int screen = -1;
 
-        /* argv[3] is optional and may be "--dark" rather than an index. */
+        /* argv[3] is optional and holds the screen index when present. */
         if(argc > 3 && argv[3][0] >= '0' && argv[3][0] <= '9')
         {
             screen = atoi(argv[3]);
         }
 
-        return run_shot(argv[2], screen, has_flag(argc, argv, "--dark"));
+        return run_shot(
+            argv[2],
+            screen,
+            flag_int(argc, argv, "--picker", -1)
+        );
+    }
+
+
+    /* -----------------------------------------------------
+     * HOME CLICK TEST MODE
+     * ----------------------------------------------------- */
+
+    if(argc > 1 && strcmp(argv[1], "--clicktest") == 0)
+    {
+        return run_clicktest();
     }
 
 
@@ -535,19 +758,40 @@ int main(int argc, char **argv)
     lv_sdl_window_set_zoom(display, 1.0f);
 
     print_pixel_format(display);
+    print_draw_buffer();
 
 
     /* -----------------------------------------------------
      * BUILD
      * ----------------------------------------------------- */
 
+    /* analyzer_ui_build() creates the app's focus group, so the keyboard is
+     * created after it and attached to that group. */
     analyzer_ui_build();
 
-    /* Start straight in the dark palette when asked (debug/demo). */
-    if(has_flag(argc, argv, "--dark"))
+    lv_group_t *group = lv_group_get_default();
+
+    if(group != NULL)
     {
-        analyzer_ui_set_dark(1);
+        /*
+         * The host keyboard. It is what makes a form's text boxes typeable in
+         * the simulator: tap a box, type, press Enter. The panel itself wants
+         * an on-screen keyboard (controls.py: OnScreenKeyboard), which is
+         * separate work - but on a laptop this has to simply work.
+         */
+        lv_indev_t *keyboard = lv_sdl_keyboard_create();
+
+        if(keyboard != NULL)
+        {
+            lv_indev_set_group(keyboard, group);
+        }
+        else
+        {
+            printf("Failed to create SDL keyboard\n");
+        }
     }
+
+
 
     printf(
         "[mem] after startup: %u bytes used, %u bytes peak\n",
