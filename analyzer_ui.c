@@ -2302,6 +2302,19 @@ static lv_obj_t *build_page_bar(
 #define LIST_ROWS 4
 #define LIST_PER_PAGE (LIST_COLUMNS * LIST_ROWS)
 
+/*
+ * Gutter between two test tiles, in design px (25 x 20 at 800x480).
+ *
+ * The grid gives each column and row a share of the card and then splits
+ * LIST_GUTTER_* of what is left into the gaps, so the tiles shrink by exactly
+ * as much as the gaps grow: more air between the tiles costs no cell, and the
+ * 5 x 4 array still fills the card edge to edge. Measured on the panel, these
+ * leave ~26 px between columns and ~21 px between rows, against the 5 px the
+ * grid had when the tiles were stretched to fill their cells outright.
+ */
+#define LIST_GUTTER_X sc(40)
+#define LIST_GUTTER_Y sc(32)
+
 static int list_filter_method = -1;     /* -1 = no filter        */
 static int list_sort_desc = 0;          /* 0 = A-Z, 1 = Z-A      */
 static int list_page = 1;
@@ -2579,9 +2592,21 @@ static lv_obj_t *create_test_list_screen(void)
     lv_obj_set_height(grid, lv_pct(100));
     lv_obj_set_flex_grow(grid, 1);
 
+    /*
+     * The gutter between tiles is the grid container's own padding: LVGL's
+     * grid divides the free space of a row/column into those gaps, and the
+     * tiles then stretch to whatever cell is left. So one number here sets
+     * BOTH the gap and the tile size, and they always add up to the grid -
+     * the tiles cannot grow into the gap and the gap cannot push a tile off
+     * the panel, whatever the display measures.
+     *
+     * At 800x480 the grid gets 762 x 293 px, so these gutters leave the tiles
+     * 132 x 58 px instead of the 148 x 70 they fill with hairline gaps. That
+     * is the same five columns and four rows, just with room to breathe.
+     */
     lv_obj_set_style_pad_all(grid, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_column(grid, sc(6), LV_PART_MAIN);
-    lv_obj_set_style_pad_row(grid, sc(6), LV_PART_MAIN);
+    lv_obj_set_style_pad_column(grid, LIST_GUTTER_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(grid, LIST_GUTTER_Y, LV_PART_MAIN);
     lv_obj_clear_flag(grid, LV_OBJ_FLAG_SCROLLABLE);
 
     static int32_t list_cols[LIST_COLUMNS + 1] =
@@ -2663,7 +2688,11 @@ static lv_obj_t *create_test_list_screen(void)
         lv_obj_set_style_border_width(tile, 1, LV_PART_MAIN);
         lv_obj_set_style_border_color(tile, CLR_METHOD_BORDER(method), LV_PART_MAIN);
         lv_obj_set_style_radius(tile, sc(12), LV_PART_MAIN);
-        lv_obj_set_style_pad_hor(tile, sc(4), LV_PART_MAIN);
+
+        /* Comfortable padding inside the tile. make_button already wraps and
+         * centres the name across the tile's width, so the longest test names
+         * stay on one line and nothing is clipped. */
+        lv_obj_set_style_pad_hor(tile, sc(10), LV_PART_MAIN);
 
         lv_obj_set_grid_cell(
             tile,
